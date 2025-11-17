@@ -1,0 +1,23 @@
+name: Gemini Assistant
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  assist:
+    if: startsWith(github.event.comment.body, '@gemini-cli /ask')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Gemini Assistant
+        uses: google-gemini/run-gemini-cli@v1
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          prompt: ${{ github.event.comment.body }}

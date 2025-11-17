@@ -1,0 +1,23 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: '0 0 * * *' # Runs every day at midnight
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Gemini Issue Triage
+        uses: google-gemini/run-gemini-cli@v1
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          prompt: "Triage this issue: ${{ github.event.issue.html_url }}"
