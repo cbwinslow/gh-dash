@@ -30,6 +30,7 @@ h1 {
 }
 h2 {
   font-size: var(--text-2xl);
+  color: var(--sl-color-white);
 }
 h3 {
   font-size: var(--text-xl);
@@ -69,6 +70,16 @@ h6 {
     to right in oklab,
     oklch(90% 0.5 200),
     oklch(80% 0.3 230)
+  );
+
+  --hdr-green-red-gradient: linear-gradient(
+    90deg,
+    hsl(123deg 100% 47%) 1%,
+    hsl(80deg 100% 41%) 49%,
+    hsl(56deg 100% 37%) 51%,
+    hsl(37deg 100% 43%) 49%,
+    hsl(22deg 100% 47%) 51%,
+    hsl(356deg 100% 47%) 99%
   );
 
   --hdr-green-gradient: linear-gradient(
@@ -126,6 +137,16 @@ h6 {
     oklch(64% 0.5 178)
   );
 
+  --hdr-green-red-gradient: linear-gradient(
+    90deg,
+    hsl(123deg 100% 47%) 1%,
+    hsl(80deg 100% 41%) 49%,
+    hsl(56deg 100% 37%) 51%,
+    hsl(37deg 100% 43%) 49%,
+    hsl(22deg 100% 47%) 51%,
+    hsl(356deg 100% 47%) 99%
+  );
+
   --hdr-red-gradient: linear-gradient(
     to right in oklab,
     oklch(24% 0.45 37),
@@ -149,7 +170,7 @@ h6 {
 
 @layer base {
   :root {
-    --font-family: "CommitMono";
+    --font-family: "CommitMono", "MyFallbackFont", monospace;
     --font-size: 16px;
   }
 
@@ -172,7 +193,7 @@ h6 {
   --foreground2: var(--sl-color-gray-2);
 
   ul > li {
-    font-family: "CommitMono";
+    font-family: var(--font-family);
     --sl-sidebar-item-padding-inline: 0;
     color: var(--foreground2);
     text-decoration: none;
@@ -252,12 +273,12 @@ h6 {
 }
 
 code {
-  font-family: "CommitMono";
+  font-family: var(--font-family);
   color: var(--sl-color-accent);
 }
 
 pre {
-  font-family: "CommitMono";
+  font-family: var(--font-family);
   background: var(--background0);
 
   code span {

@@ -9,7 +9,7 @@ export function GET() {
       default: {
         preview: {
           open: true,
-          width: 50,
+          width: 0.45,
         },
         prsLimit: 20,
         prApproveComment: "LGTM",
@@ -63,10 +63,10 @@ export function GET() {
             width: {
               title: "Preview Pane Width",
               description:
-                "Specifies the width of the preview pane in columns.",
-              type: "integer",
-              minimum: 1,
-              default: 50,
+                "Specifies the width of the preview pane. Numbers between 0 and 1 represent size relative to overall terminal window size (e.g 0.4 is 40%), numbers >=1 represent size in columns.",
+              type: "number",
+              minimum: 0,
+              default: 0.45,
             },
           },
         },
@@ -88,9 +88,9 @@ export function GET() {
         view: {
           title: "Default View",
           description:
-            "Specifies whether the dashboard should display the PRs or Issues view on load.",
+            "Specifies which dashboard view should be displayed on load.",
           type: "string",
-          enum: ["issues", "prs"],
+          enum: ["notifications", "issues", "prs"],
           default: "prs",
         },
         prApproveComment: {

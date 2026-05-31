@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"os/exec"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/log"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/log/v2"
 	"github.com/gen2brain/beeep"
 
-	"github.com/dlvhdr/gh-dash/v4/internal/data"
-	prComponent "github.com/dlvhdr/gh-dash/v4/internal/tui/components/pr"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
@@ -24,8 +23,8 @@ func (m *Model) watchChecks() tea.Cmd {
 
 	prNumber := pr.GetNumber()
 	title := pr.GetTitle()
-	url := pr.GetUrl()
 	repoNameWithOwner := pr.GetRepoNameWithOwner()
+	prData := pr.(*prrow.Data)
 	taskId := fmt.Sprintf("pr_reopen_%d", prNumber)
 	task := context.Task{
 		Id:           taskId,
@@ -42,9 +41,9 @@ func (m *Model) watchChecks() tea.Cmd {
 			"checks",
 			"--watch",
 			"--fail-fast",
-			fmt.Sprint(m.GetCurrRow().GetNumber()),
+			fmt.Sprint(prNumber),
 			"-R",
-			m.GetCurrRow().GetRepoNameWithOwner(),
+			repoNameWithOwner,
 		)
 
 		var outb, errb bytes.Buffer
@@ -55,16 +54,11 @@ func (m *Model) watchChecks() tea.Cmd {
 		go func() {
 			err := c.Wait()
 			if err != nil {
-				log.Debug("Error waiting for watch command to finish", "err", err, "stderr", errb.String(), "stdout", outb.String())
+				log.Error("Error waiting for watch command to finish", "err", err,
+					"stderr", errb.String(), "stdout", outb.String())
 			}
 
-			// TODO: check for installation of terminal-notifier or alternative as logo isn't supported
-			updatedPr, err := data.FetchPullRequest(url)
-			if err != nil {
-				log.Debug("Error fetching updated PR details", "url", url, "err", err)
-			}
-
-			renderedPr := prComponent.PullRequest{Ctx: m.Ctx, Data: &updatedPr}
+			renderedPr := prrow.PullRequest{Ctx: m.Ctx, Data: prData}
 			checksRollup := " Checks are pending"
 			switch renderedPr.GetStatusChecksRollup() {
 			case "SUCCESS":
@@ -79,7 +73,7 @@ func (m *Model) watchChecks() tea.Cmd {
 				"",
 			)
 			if err != nil {
-				log.Debug("Error showing system notification", "err", err)
+				log.Error("Error showing system notification", "err", err)
 			}
 		}()
 

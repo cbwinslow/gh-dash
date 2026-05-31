@@ -3,7 +3,10 @@ package utils
 import (
 	"math"
 	"strconv"
+	"strings"
 	"time"
+
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -93,4 +96,38 @@ func ShortNumber(n int) string {
 	}
 
 	return strconv.Itoa(n/1000000) + "m"
+}
+
+// GetStylePrefix extracts ANSI codes from a lipgloss style without the trailing reset.
+// This allows styled text to be concatenated without breaking parent background colors.
+func GetStylePrefix(s lipgloss.Style) string {
+	rendered := s.Render("")
+	// Strip trailing SGR reset sequence: \x1b[0m (4 bytes) or \x1b[m (3 bytes).
+	// lipgloss v2 uses the shorter form (\x1b[m); both are valid per ANSI spec.
+	if len(rendered) >= 4 && rendered[len(rendered)-4:] == "\x1b[0m" {
+		return rendered[:len(rendered)-4]
+	}
+	if len(rendered) >= 3 && rendered[len(rendered)-3:] == "\x1b[m" {
+		return rendered[:len(rendered)-3]
+	}
+	return rendered
+}
+
+func Clamp(mn, wanted, mx int) int {
+	return min(mx, max(mn, wanted))
+}
+
+// Remove all ANSI reset codes
+func RemoveReset(s string) string {
+	return strings.ReplaceAll(s, "\x1b[m", "")
+}
+
+// Remove last ANSI reset code
+func RemoveLastReset(s string) string {
+	idx := strings.LastIndex(s, "\x1b[m")
+	if idx < 0 {
+		return s
+	}
+
+	return s[:idx]
 }

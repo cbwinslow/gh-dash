@@ -2,16 +2,18 @@ package issuessection
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issue"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/issuerow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
@@ -55,17 +57,18 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 
 		if m.IsSearchFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.SearchBar.SetValue(m.SearchValue)
 				blinkCmd := m.SetIsSearching(false)
 				return m, blinkCmd
 
-			case tea.KeyEnter:
+			case "enter":
 				m.SearchValue = m.SearchBar.Value()
+				m.SyncSmartFilterWithSearchValue()
 				m.SetIsSearching(false)
 				m.ResetRows()
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
@@ -75,21 +78,23 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		if m.IsPromptConfirmationFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.PromptConfirmationBox.Reset()
 				cmd = m.SetIsPromptConfirmationShown(false)
 				return m, cmd
 
-			case tea.KeyEnter:
+			case "enter":
 				input := m.PromptConfirmationBox.Value()
 				action := m.GetPromptConfirmationAction()
-				if input == "Y" || input == "y" {
+				if input == "" || input == "Y" || input == "y" {
+					issue := m.GetCurrRow()
+					sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
 					switch action {
 					case "close":
-						cmd = m.close()
+						cmd = tasks.CloseIssue(m.Ctx, sid, issue)
 					case "reopen":
-						cmd = m.reopen()
+						cmd = tasks.ReopenIssue(m.Ctx, sid, issue)
 					}
 				}
 
@@ -103,7 +108,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, keys.IssueKeys.ToggleSmartFiltering):
-			if !m.HasRepoNameInConfiguredFilter() {
+			if m.HasCurrentRepoNameInConfiguredFilter() || !m.HasRepoNameInConfiguredFilter() {
 				m.IsFilteredByCurrentRemote = !m.IsFilteredByCurrentRemote
 			}
 			searchValue := m.GetSearchValue()
@@ -116,7 +121,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			}
 		}
 
-	case UpdateIssueMsg:
+	case tasks.UpdateIssueMsg:
 		for i, currIssue := range m.Issues {
 			if currIssue.Number == msg.IssueNumber {
 				if msg.IsClosed != nil {
@@ -234,7 +239,7 @@ func GetSectionColumns(
 			Hidden: assigneesLayout.Hidden,
 		},
 		{
-			Title:  "",
+			Title:  constants.CommentsIcon,
 			Width:  &issueNumCommentsCellWidth,
 			Hidden: commentsLayout.Hidden,
 		},
@@ -259,7 +264,7 @@ func GetSectionColumns(
 func (m Model) BuildRows() []table.Row {
 	var rows []table.Row
 	for _, currIssue := range m.Issues {
-		issueModel := issue.Issue{Ctx: m.Ctx, Data: currIssue, ShowAuthorIcon: m.ShowAuthorIcon}
+		issueModel := issuerow.Issue{Ctx: m.Ctx, Data: currIssue, ShowAuthorIcon: m.ShowAuthorIcon}
 		rows = append(rows, issueModel.ToTableRow())
 	}
 
@@ -275,10 +280,11 @@ func (m *Model) NumRows() int {
 }
 
 func (m *Model) GetCurrRow() data.RowData {
-	if len(m.Issues) == 0 {
+	idx := m.Table.GetCurrItem()
+	if idx < 0 || idx >= len(m.Issues) {
 		return nil
 	}
-	issue := m.Issues[m.Table.GetCurrItem()]
+	issue := m.Issues[idx]
 	return &issue
 }
 
@@ -385,15 +391,6 @@ type SectionIssuesFetchedMsg struct {
 	TaskId     string
 }
 
-type UpdateIssueMsg struct {
-	IssueNumber      int
-	Labels           *data.IssueLabels
-	NewComment       *data.IssueComment
-	IsClosed         *bool
-	AddedAssignees   *data.Assignees
-	RemovedAssignees *data.Assignees
-}
-
 func addAssignees(assignees, addedAssignees []data.Assignee) []data.Assignee {
 	newAssignees := assignees
 	for _, assignee := range addedAssignees {
@@ -419,12 +416,7 @@ func removeAssignees(
 }
 
 func assigneesContains(assignees []data.Assignee, assignee data.Assignee) bool {
-	for _, a := range assignees {
-		if assignee == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(assignees, assignee)
 }
 
 func (m Model) GetItemSingularForm() string {

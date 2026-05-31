@@ -8,10 +8,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/log"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/log/v2"
 	"github.com/cli/go-gh/v2/pkg/repository"
 	"github.com/go-sprout/sprout"
 	timeregistry "github.com/go-sprout/sprout/registry/time"
@@ -64,21 +64,22 @@ type NewSectionOptions struct {
 	CreatedAt   time.Time
 }
 
-func (options NewSectionOptions) GetConfigFiltersWithCurrentRemoteAdded(ctx *context.ProgramContext) string {
+func (options NewSectionOptions) GetConfigFiltersWithCurrentRemoteAdded(
+	ctx *context.ProgramContext,
+) string {
 	searchValue := options.Config.Filters
 	if !ctx.Config.SmartFilteringAtLaunch {
 		return searchValue
 	}
-	repo, err := repository.Current()
-	if err != nil {
+	if ctx.Repo == (repository.Repository{}) {
 		return searchValue
 	}
-	for _, token := range strings.Fields(searchValue) {
+	for token := range strings.FieldsSeq(searchValue) {
 		if strings.HasPrefix(token, "repo:") {
 			return searchValue
 		}
 	}
-	return fmt.Sprintf("repo:%s/%s %s", repo.Owner, repo.Name, searchValue)
+	return fmt.Sprintf("repo:%s/%s %s", ctx.Repo.Owner, ctx.Repo.Name, searchValue)
 }
 
 func NewModel(
@@ -86,6 +87,16 @@ func NewModel(
 	options NewSectionOptions,
 ) BaseModel {
 	filters := options.GetConfigFiltersWithCurrentRemoteAdded(ctx)
+	isFilteredByCurrentRemote := false
+	if ctx.Repo != (repository.Repository{}) {
+		currentCloneFilter := fmt.Sprintf("repo:%s/%s", ctx.Repo.Owner, ctx.Repo.Name)
+		for token := range strings.FieldsSeq(filters) {
+			if token == currentCloneFilter {
+				isFilteredByCurrentRemote = true
+				break
+			}
+		}
+	}
 	m := BaseModel{
 		Ctx:          ctx,
 		Id:           options.Id,
@@ -101,14 +112,11 @@ func NewModel(
 		}),
 		SearchValue:               filters,
 		IsSearching:               false,
-		IsFilteredByCurrentRemote: filters != options.Config.Filters,
+		IsFilteredByCurrentRemote: isFilteredByCurrentRemote,
 		TotalCount:                0,
 		PageInfo:                  nil,
 		PromptConfirmationBox:     prompt.NewModel(ctx),
 		ShowAuthorIcon:            ctx.Config.ShowAuthorIcons,
-	}
-	if !ctx.Config.SmartFilteringAtLaunch {
-		m.IsFilteredByCurrentRemote = false
 	}
 	m.Table = table.NewModel(
 		*ctx,
@@ -173,10 +181,10 @@ type Table interface {
 type Search interface {
 	SetIsSearching(val bool) tea.Cmd
 	IsSearchFocused() bool
+	ViewCompletions() string
 	ResetFilters()
 	GetFilters() string
 	ResetPageInfo()
-	IsFilteringByClone() bool
 }
 
 type PromptConfirmation interface {
@@ -189,7 +197,10 @@ type PromptConfirmation interface {
 
 func (m *BaseModel) GetDimensions() constants.Dimensions {
 	return constants.Dimensions{
-		Width:  max(0, m.Ctx.MainContentWidth-m.Ctx.Styles.Section.ContainerStyle.GetHorizontalPadding()),
+		Width: max(
+			0,
+			m.Ctx.MainContentWidth-m.Ctx.Styles.Section.ContainerStyle.GetHorizontalPadding(),
+		),
 		Height: max(0, m.Ctx.MainContentHeight-common.SearchHeight),
 	}
 }
@@ -199,8 +210,8 @@ func (m *BaseModel) GetConfig() config.SectionConfig {
 }
 
 func (m *BaseModel) HasRepoNameInConfiguredFilter() bool {
-	filters := m.Config.Filters
-	for _, token := range strings.Fields(filters) {
+	filters := m.SearchValue
+	for token := range strings.FieldsSeq(filters) {
 		if strings.HasPrefix(token, "repo:") {
 			return true
 		}
@@ -208,21 +219,38 @@ func (m *BaseModel) HasRepoNameInConfiguredFilter() bool {
 	return false
 }
 
+func (m *BaseModel) HasCurrentRepoNameInConfiguredFilter() bool {
+	filters := m.SearchValue
+	if m.Ctx.Repo == (repository.Repository{}) {
+		return false
+	}
+	currentCloneFilter := fmt.Sprintf("repo:%s/%s", m.Ctx.Repo.Owner, m.Ctx.Repo.Name)
+	for token := range strings.FieldsSeq(filters) {
+		if token == currentCloneFilter {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *BaseModel) SyncSmartFilterWithSearchValue() {
+	m.IsFilteredByCurrentRemote = m.HasCurrentRepoNameInConfiguredFilter()
+}
+
 func (m *BaseModel) GetSearchValue() string {
 	searchValue := m.enrichSearchWithTemplateVars()
-	repo, err := repository.Current()
-	if err != nil {
+	if m.Ctx.Repo == (repository.Repository{}) {
 		return searchValue
 	}
 
-	if m.HasRepoNameInConfiguredFilter() {
-		return searchValue
-	}
-	currentCloneFilter := fmt.Sprintf("repo:%s/%s", repo.Owner, repo.Name)
+	currentCloneFilter := fmt.Sprintf("repo:%s/%s", m.Ctx.Repo.Owner, m.Ctx.Repo.Name)
 	var searchValueWithoutCurrentCloneFilter []string
-	for _, token := range strings.Fields(searchValue) {
-		if !strings.HasPrefix(token, currentCloneFilter) {
-			searchValueWithoutCurrentCloneFilter = append(searchValueWithoutCurrentCloneFilter, token)
+	for token := range strings.FieldsSeq(searchValue) {
+		if token != currentCloneFilter {
+			searchValueWithoutCurrentCloneFilter = append(
+				searchValueWithoutCurrentCloneFilter,
+				token,
+			)
 		}
 	}
 	if m.IsFilteredByCurrentRemote {
@@ -238,7 +266,10 @@ func (m *BaseModel) enrichSearchWithTemplateVars() string {
 		Now: time.Now(),
 	}
 	sl := slog.New(log.Default())
-	handler := sprout.New(sprout.WithRegistries(timeregistry.NewRegistry(), utils.NewRegistry()), sprout.WithLogger(sl))
+	handler := sprout.New(
+		sprout.WithRegistries(timeregistry.NewRegistry(), utils.NewRegistry()),
+		sprout.WithLogger(sl),
+	)
 	funcs := handler.Build()
 
 	tmpl, err := template.New("search").Funcs(funcs).Parse(searchValue)
@@ -316,8 +347,13 @@ func (m *BaseModel) GetIsLoading() bool {
 func (m *BaseModel) SetIsSearching(val bool) tea.Cmd {
 	m.IsSearching = val
 	if val {
-		m.SearchBar.Focus()
-		return m.SearchBar.Init()
+		cmds := make([]tea.Cmd, 0)
+		cmd := m.SearchBar.Focus()
+		cmds = append(cmds, cmd)
+		m.SearchBar.CursorEnd()
+		m.SearchBar, cmd = m.SearchBar.Update(nil)
+		cmds = append(cmds, cmd)
+		return tea.Sequence(cmds...)
 	} else {
 		m.SearchBar.Blur()
 		return nil
@@ -326,6 +362,10 @@ func (m *BaseModel) SetIsSearching(val bool) tea.Cmd {
 
 func (m *BaseModel) ResetFilters() {
 	m.SearchBar.SetValue(m.GetSearchValue())
+}
+
+func (m *BaseModel) ViewCompletions() string {
+	return m.SearchBar.ViewCompletions()
 }
 
 func (m *BaseModel) ResetPageInfo() {
@@ -380,10 +420,6 @@ func (m *BaseModel) GetFilters() string {
 	return m.GetSearchValue()
 }
 
-func (m *BaseModel) IsFilteringByClone() bool {
-	return m.IsFilteredByCurrentRemote
-}
-
 func (m *BaseModel) GetMainContent() string {
 	if m.Table.Rows == nil {
 		d := m.GetDimensions()
@@ -407,13 +443,15 @@ func (m *BaseModel) GetMainContent() string {
 
 func (m *BaseModel) View() string {
 	search := m.SearchBar.View(m.Ctx)
-	return m.Ctx.Styles.Section.ContainerStyle.Render(
-		lipgloss.JoinVertical(
-			lipgloss.Left,
-			search,
-			m.GetMainContent(),
-		),
-	)
+	return m.Ctx.Styles.Section.ContainerStyle.
+		Width(m.Ctx.MainContentWidth).
+		Render(
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				search,
+				m.GetMainContent(),
+			),
+		)
 }
 
 func (m *BaseModel) ResetRows() {
@@ -453,6 +491,9 @@ func (m *BaseModel) GetPromptConfirmation() string {
 		case m.PromptConfirmationAction == "update" && m.Ctx.View == config.PRsView:
 			prompt = "Are you sure you want to update this PR? (Y/n) "
 
+		case m.PromptConfirmationAction == "approveWorkflows" && m.Ctx.View == config.PRsView:
+			prompt = "Are you sure you want to approve all workflows? (Y/n) "
+
 		case m.PromptConfirmationAction == "close" && m.Ctx.View == config.IssuesView:
 			prompt = "Are you sure you want to close this issue? (Y/n) "
 
@@ -464,6 +505,8 @@ func (m *BaseModel) GetPromptConfirmation() string {
 			prompt = "Enter branch name: "
 		case m.PromptConfirmationAction == "create_pr" && m.Ctx.View == config.RepoView:
 			prompt = "Enter PR title: "
+		case m.PromptConfirmationAction == "done_all" && m.Ctx.View == config.NotificationsView:
+			prompt = "Are you sure you want to mark all as done? (Y/n) "
 		}
 
 		m.PromptConfirmationBox.SetPrompt(prompt)

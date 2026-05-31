@@ -13,12 +13,11 @@ import (
 	"runtime/pprof"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/log/v2"
 	"github.com/charmbracelet/fang"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/log"
-	zone "github.com/lrstanley/bubblezone"
-	"github.com/muesli/termenv"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
@@ -26,7 +25,6 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
 	dctx "github.com/dlvhdr/gh-dash/v4/internal/tui/context"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/markdown"
 )
 
 var (
@@ -43,9 +41,16 @@ var (
 
 	rootCmd = &cobra.Command{
 		Use: "gh dash",
-		Long: lipgloss.JoinVertical(lipgloss.Left, logo.Render(),
+		Long: lipgloss.JoinVertical(
+			lipgloss.Left,
+			logo.Render(),
 			"A rich terminal UI for GitHub that doesn't break your flow.",
-			"Visit https://gh-dash.dev for the docs."),
+			"",
+			lipgloss.NewStyle().
+				Faint(true).
+				Italic(true).
+				Render("Visit https://gh-dash.dev for the docs."),
+		),
 		Short:   "A rich terminal UI for GitHub that doesn't break your flow.",
 		Version: "",
 		Example: `
@@ -68,9 +73,41 @@ gh dash -v
 )
 
 func Execute() {
-	if err := fang.Execute(context.Background(), rootCmd, fang.WithVersion(rootCmd.Version),
-		fang.WithoutCompletions(), fang.WithoutManpage()); err != nil {
+	themeFunc := fang.WithColorSchemeFunc(func(
+		ld lipgloss.LightDarkFunc,
+	) fang.ColorScheme {
+		c := ld(lipgloss.Color("#00196F"), lipgloss.Color("#02F9FB"))
+		def := fang.DefaultColorScheme(ld)
+		def.DimmedArgument = ld(lipgloss.Black, lipgloss.White)
+		def.Codeblock = lipgloss.Color("#1E1E2C")
+		def.Title = c
+		def.Flag = lipgloss.Color("#42A0FA")
+		def.Command = c
+		def.Program = c
+		return def
+	})
+	if err := fang.Execute(
+		context.Background(),
+		rootCmd,
+		themeFunc,
+		fang.WithVersion(rootCmd.Version),
+		fang.WithoutCompletions(),
+		fang.WithoutManpage(),
+	); err != nil {
 		os.Exit(1)
+	}
+}
+
+func setDebugLogLevel() {
+	switch os.Getenv("LOG_LEVEL") {
+	case "debug", "":
+		log.SetLevel(log.DebugLevel)
+	case "info":
+		log.SetLevel(log.InfoLevel)
+	case "warn":
+		log.SetLevel(log.WarnLevel)
+	case "error":
+		log.SetLevel(log.ErrorLevel)
 	}
 }
 
@@ -79,16 +116,16 @@ func createModel(location config.Location, debug bool) (tui.Model, *os.File) {
 
 	if debug {
 		var fileErr error
-		newConfigFile, fileErr := os.OpenFile("debug.log",
+		loggerFile, fileErr = os.OpenFile("debug.log",
 			os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 		if fileErr == nil {
-			log.SetOutput(newConfigFile)
+			log.SetOutput(loggerFile)
 			log.SetTimeFormat(time.Kitchen)
 			log.SetReportCaller(true)
-			log.SetLevel(log.DebugLevel)
-			log.Debug("Logging to debug.log")
+			setDebugLogLevel()
+			log.Info("Logging to debug.log")
 			if location.RepoPath != "" {
-				log.Debug("Running in repo", "repo", location.RepoPath)
+				log.Info("Running in repo", "repo", location.RepoPath)
 			}
 		} else {
 			loggerFile, _ = tea.LogToFile("debug.log", "debug")
@@ -115,7 +152,12 @@ func buildVersion(version, commit, date, builtBy string) string {
 	}
 	result = fmt.Sprintf("%s\ngoos: %s\ngoarch: %s", result, runtime.GOOS, runtime.GOARCH)
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Sum != "" {
-		result = fmt.Sprintf("%s\nmodule version: %s, checksum: %s", result, info.Main.Version, info.Main.Sum)
+		result = fmt.Sprintf(
+			"%s\nmodule version: %s, checksum: %s",
+			result,
+			info.Main.Version,
+			info.Main.Sum,
+		)
 	}
 
 	return result
@@ -140,7 +182,14 @@ func init() {
 	}
 
 	rootCmd.Version = buildVersion(Version, Commit, Date, BuiltBy)
-	rootCmd.SetVersionTemplate(`gh-dash {{printf "version %s\n" .Version}}`)
+	rootCmd.SetVersionTemplate(
+		lipgloss.JoinVertical(
+			lipgloss.Left,
+			"",
+			logo.Render(),
+			`gh-dash {{printf "version %s\n" .Version}}`,
+		),
+	)
 
 	rootCmd.Flags().Bool(
 		"debug",
@@ -181,10 +230,6 @@ func init() {
 
 		zone.NewGlobal()
 
-		// see https://github.com/charmbracelet/lipgloss/issues/73
-		lipgloss.SetHasDarkBackground(termenv.HasDarkBackground())
-		markdown.InitializeMarkdownStyle(termenv.HasDarkBackground())
-
 		model, logger := createModel(config.Location{RepoPath: repo, ConfigFlag: cfgFlag}, debug)
 		if logger != nil {
 			defer logger.Close()
@@ -203,14 +248,10 @@ func init() {
 			defer pprof.StopCPUProfile()
 		}
 
-		p := tea.NewProgram(
-			model,
-			tea.WithAltScreen(),
-			tea.WithReportFocus(),
-			tea.WithMouseCellMotion(),
-		)
+		p := tea.NewProgram(model)
 		if _, err := p.Run(); err != nil {
-			log.Fatal("Failed starting the TUI", err)
+			fmt.Printf("%+v\n", err)
+			log.Fatal("fatal error during run", "err", err)
 		}
 	}
 }

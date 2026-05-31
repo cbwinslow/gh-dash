@@ -19,6 +19,23 @@ issuesSections:
     filters: author:@me repo:dlvhdr/gh-dash is:open
   - title: All
     filters: repo:dlvhdr/gh-dash sort:reactions
+notificationsSections:
+  - title: All
+    filters: ""
+  - title: Created
+    filters: "reason:author"
+  - title: Participating
+    filters: "reason:participating"
+  - title: Mentioned
+    filters: "reason:mention"
+  - title: Review Requested
+    filters: "reason:review-requested"
+  - title: Assigned
+    filters: "reason:assign"
+  - title: Subscribed
+    filters: "reason:subscribed"
+  - title: Team Mentioned
+    filters: "reason:team-mention"
 repo:
   branchesRefetchIntervalSeconds: 30
   prsRefetchIntervalSeconds: 60
@@ -26,9 +43,12 @@ defaults:
   preview:
     open: true
     width: 60
+    height: 0.6
+    position: auto
   prsLimit: 5
   prApproveComment: LGTM
   issuesLimit: 5
+  notificationsLimit: 20
   view: prs
   layout:
     prs:
@@ -48,6 +68,9 @@ defaults:
       base:
         width: 15
         hidden: false
+      labels:
+        width: 22
+        hidden: true
       lines:
         width: 15
     issues:
@@ -138,3 +161,4 @@ pager:
 confirmQuit: false
 showAuthorIcons: true
 smartFilteringAtLaunch: true
+includeReadNotifications: true

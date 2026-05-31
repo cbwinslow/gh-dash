@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
@@ -74,13 +74,13 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 	case tea.KeyMsg:
 
 		if m.IsSearchFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.SearchBar.SetValue(m.SearchValue)
 				blinkCmd := m.SetIsSearching(false)
 				return m, blinkCmd
 
-			case tea.KeyEnter:
+			case "enter":
 				m.Table.ResetCurrItem()
 				m.SetIsSearching(false)
 				m.SearchValue = m.SearchBar.Value()
@@ -92,13 +92,13 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		if m.IsPromptConfirmationFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.PromptConfirmationBox.Reset()
 				cmd = m.SetIsPromptConfirmationShown(false)
 				return m, cmd
 
-			case tea.KeyEnter:
+			case "enter":
 				input := m.PromptConfirmationBox.Value()
 				action := m.GetPromptConfirmationAction()
 				branch := m.getCurrBranch().Data.Name
@@ -110,7 +110,7 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 					cmd = tasks.CreatePR(m.Ctx, sid, branch, input)
 				default:
 					pr := findPRForRef(m.Prs, branch)
-					if input == "Y" || input == "y" {
+					if input == "" || input == "Y" || input == "y" {
 						switch action {
 						case "delete":
 							cmd = m.deleteBranch()
@@ -442,17 +442,19 @@ type SectionPullRequestsFetchedMsg struct {
 }
 
 func (m *Model) getCurrBranch() *branch.Branch {
-	if len(m.repo.Branches) == 0 {
+	idx := m.Table.GetCurrItem()
+	if idx < 0 || idx >= len(m.Branches) {
 		return nil
 	}
-	return &m.Branches[m.Table.GetCurrItem()]
+	return &m.Branches[idx]
 }
 
 func (m *Model) GetCurrRow() data.RowData {
-	if len(m.repo.Branches) == 0 {
+	idx := m.Table.GetCurrItem()
+	if idx < 0 || idx >= len(m.repo.Branches) {
 		return nil
 	}
-	b := m.repo.Branches[m.Table.GetCurrItem()]
+	b := m.repo.Branches[idx]
 	pr := findPRForRef(m.Prs, b.Name)
 	return branch.BranchData{
 		Data: b,
@@ -552,9 +554,13 @@ func (m *Model) SetIsLoading(val bool) {
 
 func (m *Model) GetPagerContent() string {
 	s := lipgloss.NewStyle().Background(m.Ctx.Styles.ListViewPort.PagerStyle.GetBackground())
-	mod := s.Foreground(lipgloss.Color("#e0af68")).Render(fmt.Sprintf(" %d", len(m.repo.Status.Modified)))
-	plus := s.Foreground(m.Ctx.Theme.SuccessText).Render(fmt.Sprintf(" %d", len(m.repo.Status.Added)))
-	minus := s.Foreground(m.Ctx.Theme.ErrorText).Render(fmt.Sprintf(" %d", len(m.repo.Status.Removed)))
+	mod := s.Foreground(lipgloss.Color("#e0af68")).Render(
+		fmt.Sprintf(" %d", len(m.repo.Status.Modified)))
+	plus := s.Foreground(m.Ctx.Theme.SuccessText).Render(
+		fmt.Sprintf(" %d", len(m.repo.Status.Added)))
+	minus := s.Foreground(m.Ctx.Theme.ErrorText).Render(
+		fmt.Sprintf(" %d", len(m.repo.Status.Removed)))
 	spacer := s.Render(" ")
-	return m.Ctx.Styles.ListViewPort.PagerStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, plus, spacer, minus, spacer, mod))
+	return m.Ctx.Styles.ListViewPort.PagerStyle.Render(
+		lipgloss.JoinHorizontal(lipgloss.Top, plus, spacer, minus, spacer, mod))
 }

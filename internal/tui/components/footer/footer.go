@@ -5,9 +5,10 @@ import (
 	"path"
 	"strings"
 
-	bbHelp "github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/lipgloss"
-	zone "github.com/lrstanley/bubblezone"
+	bbHelp "charm.land/bubbles/v2/help"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/git"
@@ -16,6 +17,8 @@ import (
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/keys"
 	"github.com/dlvhdr/gh-dash/v4/internal/utils"
 )
+
+const viewSeparator = " │ "
 
 type Model struct {
 	ctx             *context.ProgramContext
@@ -44,7 +47,8 @@ func (m Model) View() string {
 	var footer string
 
 	if m.ShowConfirmQuit {
-		footer = lipgloss.NewStyle().Render("Really quit? (Press y/enter to confirm, any other key to cancel)")
+		footer = lipgloss.NewStyle().
+			Render("Really quit? (Press y/enter to confirm, any other key to cancel)")
 	} else {
 		helpIndicator := lipgloss.NewStyle().
 			Background(m.ctx.Theme.FaintText).
@@ -100,7 +104,7 @@ func (m *Model) SetShowConfirmQuit(val bool) {
 }
 
 func (m *Model) SetWidth(width int) {
-	m.help.Width = width
+	m.help.SetWidth(width)
 }
 
 func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
@@ -109,15 +113,52 @@ func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
 }
 
 func (m *Model) renderViewButton(view config.ViewType) string {
-	v := " PRs"
-	if view == config.IssuesView {
-		v = " Issues"
+	isActive := m.ctx.View == view
+
+	// Define icons and labels for each view
+	var icon, label string
+	// Define icons - notifications has solid/outline variants
+	solidBell := ""
+	outlineBell := ""
+
+	switch view {
+	case config.NotificationsView:
+		if m.ctx.View == config.NotificationsView {
+			icon = solidBell
+		} else {
+			icon = outlineBell
+		}
+		label = ""
+	case config.PRsView:
+		icon = ""
+		label = " PRs"
+	case config.IssuesView:
+		icon = ""
+		label = " Issues"
 	}
 
-	if m.ctx.View == view {
-		return m.ctx.Styles.ViewSwitcher.ActiveView.Render(v)
+	if isActive {
+		// Active: colored icon + prominent background
+		// Use gold for notifications bell, green for others
+		iconColor := m.ctx.Theme.SuccessText
+		if view == config.NotificationsView {
+			iconColor = compat.AdaptiveColor{
+				Light: lipgloss.Color("#B8860B"),
+				Dark:  lipgloss.Color("#FFD700"),
+			} // Gold
+		}
+		activeStyle := lipgloss.NewStyle().
+			Foreground(iconColor).
+			Background(m.ctx.Styles.ViewSwitcher.ActiveView.GetBackground()).
+			Bold(true)
+		if label != "" {
+			return activeStyle.Render(icon) + activeStyle.Render(label)
+		}
+		return activeStyle.Render(icon)
 	}
-	return m.ctx.Styles.ViewSwitcher.InactiveView.Render(v)
+
+	// Inactive: faint styling
+	return m.ctx.Styles.ViewSwitcher.InactiveView.Render(icon + label)
 }
 
 func (m *Model) renderViewSwitcher(ctx *context.ProgramContext) string {
@@ -137,8 +178,11 @@ func (m *Model) renderViewSwitcher(ctx *context.ProgramContext) string {
 
 	view := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		ctx.Styles.ViewSwitcher.ViewsSeparator.PaddingLeft(1).Render(m.renderViewButton(config.PRsView)),
-		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(" │ "),
+		ctx.Styles.ViewSwitcher.ViewsSeparator.PaddingLeft(1).
+			Render(m.renderViewButton(config.NotificationsView)),
+		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(viewSeparator),
+		m.renderViewButton(config.PRsView),
+		ctx.Styles.ViewSwitcher.ViewsSeparator.Render(viewSeparator),
 		m.renderViewButton(config.IssuesView),
 		lipgloss.NewStyle().Background(ctx.Styles.Common.FooterStyle.GetBackground()).Foreground(
 			ctx.Styles.ViewSwitcher.ViewsSeparator.GetBackground()).Render(" "),

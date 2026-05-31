@@ -1,7 +1,7 @@
 package data
 
 import (
-	"github.com/charmbracelet/log"
+	"charm.land/log/v2"
 	gh "github.com/cli/go-gh/v2/pkg/api"
 	graphql "github.com/cli/shurcooL-graphql"
 )
@@ -34,7 +34,7 @@ func FetchLatestVersion() (VersionResponse, error) {
 	if err != nil {
 		return VersionResponse{}, err
 	}
-	log.Debug("Successfully fetched latest version", "version",
+	log.Info("Successfully fetched latest version", "version",
 		queryResult.Repository.LatestRelease.TagName)
 
 	return queryResult, nil
@@ -77,7 +77,7 @@ func FetchSponsors() (SponsorsResponse, error) {
 	if err != nil {
 		return SponsorsResponse{}, err
 	}
-	log.Debug("Successfully fetched sponsors")
+	log.Info("Successfully fetched sponsors")
 
 	return queryResult, nil
 }

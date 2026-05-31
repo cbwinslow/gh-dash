@@ -2,18 +2,22 @@ package search
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/cmpcontroller"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/fuzzyselect"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/inputbox"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/context"
 )
 
 type Model struct {
 	ctx          *context.ProgramContext
 	initialValue string
-	textInput    textinput.Model
+	cmpctl       *cmpcontroller.Controller
 }
 
 type SearchOptions struct {
@@ -23,79 +27,138 @@ type SearchOptions struct {
 }
 
 func NewModel(ctx *context.ProgramContext, opts SearchOptions) Model {
-	prompt := fmt.Sprintf(" %s ", opts.Prefix)
 	ti := textinput.New()
 	ti.Placeholder = opts.Placeholder
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(ctx.Theme.FaintText)
-	ti.Width = ctx.MainContentWidth - lipgloss.Width(prompt) - 6
-	ti.PromptStyle = ti.PromptStyle.Foreground(ctx.Theme.SecondaryText)
-	ti.Prompt = prompt
-	ti.TextStyle = ti.TextStyle.Faint(true)
-	ti.Cursor.Style = ti.Cursor.Style.Faint(true)
-	ti.Cursor.TextStyle = ti.Cursor.TextStyle.Faint(true)
+	base := lipgloss.NewStyle()
+	ti.SetStyles(textinput.Styles{
+		Focused: textinput.StyleState{
+			Placeholder: lipgloss.NewStyle().Foreground(ctx.Theme.FaintText),
+			Prompt:      base.Foreground(ctx.Theme.SecondaryText),
+			Text:        base.Foreground(ctx.Theme.PrimaryText),
+		},
+		Blurred: textinput.StyleState{
+			Placeholder: lipgloss.NewStyle().Foreground(ctx.Theme.FaintText),
+			Prompt:      base.Foreground(ctx.Theme.SecondaryText),
+			Text:        lipgloss.NewStyle().Foreground(ctx.Theme.PrimaryText),
+		},
+		Cursor: textinput.CursorStyle{
+			Color: ctx.Theme.FaintText,
+			Shape: tea.CursorBar,
+			Blink: true,
+		},
+	})
+	ti.Prompt = fmt.Sprintf(" %s ", opts.Prefix)
+
 	ti.Blur()
 	ti.SetValue(opts.InitialValue)
 	ti.CursorStart()
 
-	return Model{
-		ctx:          ctx,
-		textInput:    ti,
-		initialValue: opts.InitialValue,
-	}
-}
+	ctl := cmpcontroller.New(
+		ctx,
+		inputbox.ModelOpts{TextInput: &ti},
+	)
+	selectStyles := ctx.Styles.Select
+	selectStyles.PopupStyle = ctx.Styles.Select.PopupStyle.BorderTop(false).BorderForeground(
+		ctx.Styles.Colors.OpenIssue,
+	)
+	ctl.SetSelectStyles(selectStyles)
 
-func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	m := Model{
+		ctx:          ctx,
+		initialValue: opts.InitialValue,
+		cmpctl:       &ctl,
+	}
+
+	m.cmpctl.Exit()
+
+	return m
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	var cmd tea.Cmd
-
-	m.textInput.Width = m.getInputWidth(m.ctx)
-	m.textInput, cmd = m.textInput.Update(msg)
+	cmd, _ := m.cmpctl.Update(msg)
 	return m, cmd
 }
 
 func (m Model) View(ctx *context.ProgramContext) string {
-	return lipgloss.NewStyle().
-		Width(ctx.MainContentWidth - 4).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.ctx.Theme.PrimaryBorder).
-		Render(m.textInput.View())
+	s := m.ctx.Styles.Search.Root
+	if cmp := m.ViewCompletions(); cmp != "" {
+		b := lipgloss.RoundedBorder()
+		b.BottomLeft = lipgloss.RoundedBorder().MiddleLeft
+		b.BottomRight = lipgloss.RoundedBorder().MiddleRight
+		s = s.Border(b, true)
+	}
+	if m.cmpctl.Focused() {
+		s = s.BorderForeground(m.ctx.Styles.Colors.OpenIssue)
+	}
+	return s.Render(m.cmpctl.View())
 }
 
-func (m *Model) Focus() {
-	m.textInput.TextStyle = m.textInput.TextStyle.Faint(false)
-	m.textInput.CursorEnd()
-	m.textInput.Focus()
+func (m Model) ViewCompletions() string {
+	return m.cmpctl.ViewCompletions()
+}
+
+func (m *Model) CursorEnd() {
+	m.cmpctl.CursorEnd()
+}
+
+func (m *Model) Repo() (cmpcontroller.RepoRef, bool) {
+	for token := range strings.FieldsSeq(m.Value()) {
+		if strings.HasPrefix(token, "repo:") {
+			repo, found := strings.CutPrefix(token, "repo:")
+			parts := strings.Split(repo, "/")
+			if len(parts) < 2 {
+				return cmpcontroller.RepoRef{}, false
+			}
+			return cmpcontroller.RepoRef{
+				NameWithOwner: repo,
+				Owner:         parts[0],
+				Name:          parts[1],
+			}, found
+		}
+	}
+	return cmpcontroller.RepoRef{}, false
+}
+
+func (m *Model) Focus() tea.Cmd {
+	repo, _ := m.Repo()
+	m.cmpctl.SetAutocompleteSource(&fuzzyselect.SearchQuerySource{})
+	cmd := m.cmpctl.Enter(cmpcontroller.EnterOptions{
+		Mode:                             cmpcontroller.ModeSearch,
+		Prompt:                           "",
+		Repo:                             repo,
+		EnterFetch:                       cmpcontroller.FetchWithLoading,
+		ConfirmDiscardOnCancel:           false,
+		HideAutocompleteWhenContextEmpty: false,
+		InitialValue:                     m.cmpctl.Value(),
+	})
+	m.cmpctl.ShowCompletions()
+	return cmd
 }
 
 func (m *Model) Blur() {
-	m.textInput.TextStyle = m.textInput.TextStyle.Faint(true)
-	m.textInput.CursorStart()
-	m.textInput.Blur()
+	m.cmpctl.Exit()
 }
 
 func (m *Model) SetValue(val string) {
-	m.textInput.SetValue(val)
+	m.cmpctl.SetValue(val)
 }
 
 func (m *Model) UpdateProgramContext(ctx *context.ProgramContext) {
-	oldWidth := m.textInput.Width
-	m.textInput.Width = m.getInputWidth(ctx)
-	if m.textInput.Width != oldWidth {
-		m.textInput.CursorEnd()
+	oldWidth := m.cmpctl.Width()
+	newWidth := m.getInputWidth(ctx)
+	m.cmpctl.SetWidth(newWidth)
+	if newWidth != oldWidth {
+		m.cmpctl.CursorEnd()
 	}
 }
 
 func (m *Model) getInputWidth(ctx *context.ProgramContext) int {
-	// leave space for at least 2 characters - one character of the input and 1 for the cursor
-	// - deduce 4 - 2 for the padding, 2 for the borders
-	// - deduce 1 for the cursor
-	// - deduce 1 for the spacing between the prompt and text
-	return max(2, ctx.MainContentWidth-lipgloss.Width(m.textInput.Prompt)-4-1-1) // borders + cursor
+	return max(
+		2,
+		ctx.MainContentWidth-4,
+	)
 }
 
 func (m Model) Value() string {
-	return m.textInput.Value()
+	return m.cmpctl.Value()
 }

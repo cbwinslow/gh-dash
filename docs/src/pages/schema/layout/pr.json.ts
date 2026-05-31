@@ -16,6 +16,10 @@ export function GET() {
         author: {
           width: 15,
         },
+        labels: {
+          width: 22,
+          hidden: true,
+        },
         assignees: {
           width: 20,
           hidden: true,
@@ -85,7 +89,6 @@ export function GET() {
               $ref: "./options.json",
             },
           ],
-          properties: null,
           default: {
             width: 15,
           },
@@ -102,6 +105,21 @@ export function GET() {
                 "Specify whether the role icon for PR authors should be hidden from view.",
               type: "boolean",
             },
+          },
+        },
+        labels: {
+          title: "PR Labels Column",
+          description:
+            "Defines options for the labels column in a PR section. Shows PR labels as colored pills.",
+          type: "object",
+          oneOf: [
+            {
+              $ref: "./options.json",
+            },
+          ],
+          default: {
+            width: 22,
+            hidden: true,
           },
         },
         assignees: {
@@ -132,6 +150,17 @@ export function GET() {
             width: 15,
             hidden: true,
           },
+        },
+        numComments: {
+          title: "Number of Comments Column",
+          description:
+            "Defines options for the number of comments column in a PR section.",
+          type: "object",
+          oneOf: [
+            {
+              $ref: "./options.json",
+            },
+          ],
         },
         reviewStatus: {
           title: "PR Review Status Column",

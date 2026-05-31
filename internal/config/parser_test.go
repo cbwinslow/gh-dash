@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/log"
+	"charm.land/log/v2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -60,6 +60,7 @@ func TestParser(t *testing.T) {
 		defer func() {
 			os.Unsetenv("XDG_CONFIG_HOME")
 		}()
+		t.Setenv("GH_DASH_CONFIG", "")
 
 		parsed, err := ParseConfig(Location{})
 		testutils.AssertNoError(t, err)
@@ -126,6 +127,24 @@ func TestParser(t *testing.T) {
 		assert.Empty(t, cmp.Diff(expected, actual, keybindSorter))
 	})
 
+	t.Run("Should accept notifications as the default view", func(t *testing.T) {
+		dir, err := os.MkdirTemp("", "config")
+		testutils.AssertNoError(t, err)
+		defer os.RemoveAll(dir)
+
+		configPath := path.Join(dir, "config.yml")
+		err = os.WriteFile(configPath, []byte("defaults:\n  view: notifications\n"), 0o600)
+		testutils.AssertNoError(t, err)
+
+		parsed, err := ParseConfig(Location{
+			ConfigFlag:       configPath,
+			SkipGlobalConfig: true,
+		})
+
+		testutils.AssertNoError(t, err)
+		require.Equal(t, NotificationsView, parsed.Defaults.View)
+	})
+
 	t.Run("Should merge global config with passed config", func(t *testing.T) {
 		clearEnv := setXDGConfigHomeEnvVar(t, "testdata")
 		defer clearEnv()
@@ -139,6 +158,19 @@ func TestParser(t *testing.T) {
 
 		expected := loadExpected(t, "./testdata/merged-config.golden.yml")
 		assert.Empty(t, cmp.Diff(expected, actual, keybindSorter))
+	})
+
+	t.Run("Should accept ANSI color indices in theme", func(t *testing.T) {
+		cwd := Testwd(t)
+		parsed, err := ParseConfig(Location{
+			ConfigFlag:       path.Join(cwd, "testdata/ansi-color-config.yml"),
+			SkipGlobalConfig: true,
+		})
+
+		testutils.AssertNoError(t, err)
+		require.Equal(t, Color("12"), parsed.Theme.Colors.Inline.Text.Primary)
+		require.Equal(t, Color("013"), parsed.Theme.Colors.Inline.Border.Primary)
+		require.Equal(t, Color("008"), parsed.Theme.Colors.Inline.Background.Selected)
 	})
 }
 
@@ -162,6 +194,41 @@ func setXDGConfigHomeEnvVar(t *testing.T, dir string) func() {
 	os.Setenv("XDG_CONFIG_HOME", path.Join(cwd, dir))
 	return func() {
 		os.Unsetenv("XDG_CONFIG_HOME")
+	}
+}
+
+func TestValidateColor(t *testing.T) {
+	// initParser registers the custom "color" validator
+	initParser()
+
+	type testColor struct {
+		Val Color `validate:"omitempty,color"`
+	}
+
+	valid := []string{
+		// hex colors
+		"#FFF", "#fff", "#a3c", "#FF0000", "#aa33cc",
+		// ANSI color indices (0-255)
+		"0", "1", "15", "16", "127", "255",
+		// with leading zeros (lipgloss treats identically via strconv.Atoi)
+		"000", "008", "013", "077",
+		// empty is allowed by omitempty
+		"",
+	}
+	for _, v := range valid {
+		err := validate.Struct(testColor{Val: Color(v)})
+		assert.NoErrorf(t, err, "expected %q to be valid", v)
+	}
+
+	invalid := []string{
+		"256", "999", "-1", // out of range
+		"abc", "red", "0xFF", // not numeric, not hex format
+		"#GG00FF", "#12345", // bad hex
+		"#1234567", // too long
+	}
+	for _, v := range invalid {
+		err := validate.Struct(testColor{Val: Color(v)})
+		assert.Errorf(t, err, "expected %q to be invalid", v)
 	}
 }
 

@@ -2,14 +2,16 @@ package prssection
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/log/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
-	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/pr"
+	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/prrow"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/section"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/table"
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/components/tasks"
@@ -23,7 +25,7 @@ const SectionType = "pr"
 
 type Model struct {
 	section.BaseModel
-	Prs []data.PullRequestData
+	Prs []prrow.Data
 }
 
 func NewModel(
@@ -47,7 +49,7 @@ func NewModel(
 			CreatedAt:   createdAt,
 		},
 	)
-	m.Prs = []data.PullRequestData{}
+	m.Prs = []prrow.Data{}
 
 	return m
 }
@@ -60,14 +62,15 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 	case tea.KeyMsg:
 
 		if m.IsSearchFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.SearchBar.SetValue(m.SearchValue)
 				blinkCmd := m.SetIsSearching(false)
 				return m, blinkCmd
 
-			case tea.KeyEnter:
+			case "enter":
 				m.SearchValue = m.SearchBar.Value()
+				m.SyncSmartFilterWithSearchValue()
 				m.SetIsSearching(false)
 				m.ResetRows()
 				return m, tea.Batch(m.FetchNextPageSectionRows()...)
@@ -77,18 +80,18 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 		}
 
 		if m.IsPromptConfirmationFocused() {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			switch msg.String() {
+			case "ctrl+c", "esc":
 				m.PromptConfirmationBox.Reset()
 				cmd = m.SetIsPromptConfirmationShown(false)
 				return m, cmd
 
-			case tea.KeyEnter:
+			case "enter":
 				input := m.PromptConfirmationBox.Value()
 				action := m.GetPromptConfirmationAction()
 				pr := m.GetCurrRow()
 				sid := tasks.SectionIdentifier{Id: m.Id, Type: SectionType}
-				if input == "Y" || input == "y" {
+				if input == "" || input == "Y" || input == "y" {
 					switch action {
 					case "close":
 						cmd = tasks.ClosePR(m.Ctx, sid, pr)
@@ -100,6 +103,8 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 						cmd = tasks.MergePR(m.Ctx, sid, pr)
 					case "update":
 						cmd = tasks.UpdatePR(m.Ctx, sid, pr)
+					case "approveWorkflows":
+						cmd = tasks.ApproveWorkflows(m.Ctx, sid, pr)
 					}
 				}
 
@@ -117,9 +122,20 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 			cmd = m.diff()
 
 		case key.Matches(msg, keys.PRKeys.ToggleSmartFiltering):
-			if !m.HasRepoNameInConfiguredFilter() {
-				m.IsFilteredByCurrentRemote = !m.IsFilteredByCurrentRemote
+			before := m.IsFilteredByCurrentRemote
+
+			// If we're filtering by the current repo - we want to remove it
+			// If there's no repo filter we want to add the current repo filter.
+			if m.HasCurrentRepoNameInConfiguredFilter() || !m.HasRepoNameInConfiguredFilter() {
+				m.IsFilteredByCurrentRemote = !before
 			}
+			log.Debug(
+				"toggled smart filtering",
+				"before",
+				before,
+				"after",
+				m.IsFilteredByCurrentRemote,
+			)
 			searchValue := m.GetSearchValue()
 			if m.SearchValue != searchValue {
 				m.SearchValue = searchValue
@@ -141,36 +157,43 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 
 	case tasks.UpdatePRMsg:
 		for i, currPr := range m.Prs {
-			if currPr.Number == msg.PrNumber {
-				if msg.IsClosed != nil {
-					if *msg.IsClosed {
-						currPr.State = "CLOSED"
-					} else {
-						currPr.State = "OPEN"
-					}
-				}
-				if msg.NewComment != nil {
-					currPr.Comments.Nodes = append(currPr.Comments.Nodes, *msg.NewComment)
-				}
-				if msg.AddedAssignees != nil {
-					currPr.Assignees.Nodes = addAssignees(currPr.Assignees.Nodes, msg.AddedAssignees.Nodes)
-				}
-				if msg.RemovedAssignees != nil {
-					currPr.Assignees.Nodes = removeAssignees(
-						currPr.Assignees.Nodes, msg.RemovedAssignees.Nodes)
-				}
-				if msg.ReadyForReview != nil && *msg.ReadyForReview {
-					currPr.IsDraft = false
-				}
-				if msg.IsMerged != nil && *msg.IsMerged {
-					currPr.State = "MERGED"
-					currPr.Mergeable = ""
-				}
-				m.Prs[i] = currPr
-				m.SetIsLoading(false)
-				m.Table.SetRows(m.BuildRows())
-				break
+			if currPr.Primary.Number != msg.PrNumber {
+				continue
 			}
+
+			if msg.IsClosed != nil {
+				if *msg.IsClosed {
+					currPr.Primary.State = "CLOSED"
+				} else {
+					currPr.Primary.State = "OPEN"
+				}
+			}
+			if msg.NewComment != nil {
+				currPr.Enriched.Comments.Nodes = append(
+					currPr.Enriched.Comments.Nodes, *msg.NewComment)
+			}
+			if msg.AddedAssignees != nil {
+				currPr.Primary.Assignees.Nodes = addAssignees(
+					currPr.Primary.Assignees.Nodes, msg.AddedAssignees.Nodes)
+			}
+			if msg.RemovedAssignees != nil {
+				currPr.Primary.Assignees.Nodes = removeAssignees(
+					currPr.Primary.Assignees.Nodes, msg.RemovedAssignees.Nodes)
+			}
+			if msg.Labels != nil {
+				currPr.Primary.Labels.Nodes = msg.Labels.Nodes
+			}
+			if msg.ReadyForReview != nil && *msg.ReadyForReview {
+				currPr.Primary.IsDraft = false
+			}
+			if msg.IsMerged != nil && *msg.IsMerged {
+				currPr.Primary.State = "MERGED"
+				currPr.Primary.Mergeable = ""
+			}
+			m.Prs[i] = currPr
+			m.SetIsLoading(false)
+			m.Table.SetRows(m.BuildRows())
+			break
 		}
 
 	case SectionPullRequestsFetchedMsg:
@@ -202,6 +225,17 @@ func (m *Model) Update(msg tea.Msg) (section.Section, tea.Cmd) {
 	return m, tea.Batch(cmd, searchCmd, promptCmd, tableCmd)
 }
 
+func (m *Model) EnrichPR(data data.EnrichedPullRequestData) {
+	for i, currPr := range m.Prs {
+		if currPr.Primary.Number != data.Number {
+			continue
+		}
+
+		m.Prs[i].IsEnriched = true
+		m.Prs[i].Enriched = data
+	}
+}
+
 func GetSectionColumns(
 	cfg config.PrsSectionConfig,
 	ctx *context.ProgramContext,
@@ -225,12 +259,17 @@ func GetSectionColumns(
 		sLayout.Assignees,
 	)
 	baseLayout := config.MergeColumnConfigs(dLayout.Base, sLayout.Base)
+	numCommentsLayout := config.MergeColumnConfigs(
+		dLayout.NumComments,
+		sLayout.NumComments,
+	)
 	reviewStatusLayout := config.MergeColumnConfigs(
 		dLayout.ReviewStatus,
 		sLayout.ReviewStatus,
 	)
 	stateLayout := config.MergeColumnConfigs(dLayout.State, sLayout.State)
 	ciLayout := config.MergeColumnConfigs(dLayout.Ci, sLayout.Ci)
+	labelsLayout := config.MergeColumnConfigs(dLayout.Labels, sLayout.Labels)
 	linesLayout := config.MergeColumnConfigs(dLayout.Lines, sLayout.Lines)
 
 	if !ctx.Config.Theme.Ui.Table.Compact {
@@ -246,6 +285,11 @@ func GetSectionColumns(
 				Hidden: titleLayout.Hidden,
 			},
 			{
+				Title:  constants.LabelsIcon,
+				Width:  labelsLayout.Width,
+				Hidden: labelsLayout.Hidden,
+			},
+			{
 				Title:  "Assignees",
 				Width:  assigneesLayout.Width,
 				Hidden: assigneesLayout.Hidden,
@@ -254,6 +298,11 @@ func GetSectionColumns(
 				Title:  "Base",
 				Width:  baseLayout.Width,
 				Hidden: baseLayout.Hidden,
+			},
+			{
+				Title:  constants.CommentsIcon,
+				Width:  utils.IntPtr(4),
+				Hidden: numCommentsLayout.Hidden,
 			},
 			{
 				Title:  "󰯢",
@@ -306,6 +355,11 @@ func GetSectionColumns(
 			Hidden: authorLayout.Hidden,
 		},
 		{
+			Title:  constants.LabelsIcon,
+			Width:  labelsLayout.Width,
+			Hidden: labelsLayout.Hidden,
+		},
+		{
 			Title:  "Assignees",
 			Width:  assigneesLayout.Width,
 			Hidden: assigneesLayout.Hidden,
@@ -314,6 +368,11 @@ func GetSectionColumns(
 			Title:  "Base",
 			Width:  baseLayout.Width,
 			Hidden: baseLayout.Hidden,
+		},
+		{
+			Title:  constants.CommentsIcon,
+			Width:  utils.IntPtr(4),
+			Hidden: numCommentsLayout.Hidden,
 		},
 		{
 			Title:  "󰯢",
@@ -348,8 +407,11 @@ func (m Model) BuildRows() []table.Row {
 	var rows []table.Row
 	currItem := m.Table.GetCurrItem()
 	for i, currPr := range m.Prs {
-		i := i
-		prModel := pr.PullRequest{Ctx: m.Ctx, Data: &currPr, Columns: m.Table.Columns, ShowAuthorIcon: m.ShowAuthorIcon}
+		prModel := prrow.PullRequest{
+			Ctx:     m.Ctx,
+			Data:    &currPr,
+			Columns: m.Table.Columns, ShowAuthorIcon: m.ShowAuthorIcon,
+		}
 		rows = append(
 			rows,
 			prModel.ToTableRow(currItem == i),
@@ -368,17 +430,18 @@ func (m *Model) NumRows() int {
 }
 
 type SectionPullRequestsFetchedMsg struct {
-	Prs        []data.PullRequestData
+	Prs        []prrow.Data
 	TotalCount int
 	PageInfo   data.PageInfo
 	TaskId     string
 }
 
 func (m *Model) GetCurrRow() data.RowData {
-	if len(m.Prs) == 0 {
+	idx := m.Table.GetCurrItem()
+	if idx < 0 || idx >= len(m.Prs) {
 		return nil
 	}
-	pr := m.Prs[m.Table.GetCurrItem()]
+	pr := m.Prs[idx]
 	return &pr
 }
 
@@ -429,12 +492,16 @@ func (m *Model) FetchNextPageSectionRows() []tea.Cmd {
 			}
 		}
 
+		prs := make([]prrow.Data, 0)
+		for _, pr := range res.Prs {
+			prs = append(prs, prrow.Data{Primary: &pr})
+		}
 		return constants.TaskFinishedMsg{
 			SectionId:   m.Id,
 			SectionType: m.Type,
 			TaskId:      taskId,
 			Msg: SectionPullRequestsFetchedMsg{
-				Prs:        res.Prs,
+				Prs:        prs,
 				TotalCount: res.TotalCount,
 				PageInfo:   res.PageInfo,
 				TaskId:     taskId,
@@ -512,12 +579,7 @@ func removeAssignees(
 }
 
 func assigneesContains(assignees []data.Assignee, assignee data.Assignee) bool {
-	for _, a := range assignees {
-		if assignee == a {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(assignees, assignee)
 }
 
 func (m Model) GetItemSingularForm() string {

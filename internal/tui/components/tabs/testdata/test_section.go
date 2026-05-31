@@ -1,7 +1,7 @@
 package testdata
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/config"
 	"github.com/dlvhdr/gh-dash/v4/internal/data"
@@ -95,11 +95,6 @@ func (t *TestSection) GetType() string {
 	panic("unimplemented")
 }
 
-// IsFilteringByClone implements section.Section.
-func (t *TestSection) IsFilteringByClone() bool {
-	panic("unimplemented")
-}
-
 // IsPromptConfirmationFocused implements section.Section.
 func (t *TestSection) IsPromptConfirmationFocused() bool {
 	panic("unimplemented")
@@ -182,5 +177,10 @@ func (t *TestSection) UpdateProgramContext(ctx *context.ProgramContext) {
 
 // View implements section.Section.
 func (t *TestSection) View() string {
+	panic("unimplemented")
+}
+
+// View implements section.Section.
+func (t *TestSection) ViewCompletions() string {
 	panic("unimplemented")
 }

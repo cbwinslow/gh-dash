@@ -3,11 +3,11 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"reflect"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/cli/go-gh/v2/pkg/browser"
 
 	"github.com/dlvhdr/gh-dash/v4/internal/tui/constants"
@@ -25,7 +25,10 @@ func (m *Model) openBrowser() tea.Cmd {
 	}
 	startCmd := m.ctx.StartTask(task)
 	openCmd := func() tea.Msg {
-		b := browser.New("", os.Stdout, os.Stdin)
+		// Discard the launcher's stdout/stderr so any noise (e.g. GTK / GVFS
+		// warnings from xdg-open / gnome-open) does not leak into the TUI's
+		// terminal and corrupt the display. See #829, #584, #679.
+		b := browser.New("", io.Discard, io.Discard)
 		currRow := m.getCurrRowData()
 		if currRow == nil || reflect.ValueOf(currRow).IsNil() {
 			return constants.TaskFinishedMsg{
